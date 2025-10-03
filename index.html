@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stundenplan – Live‑Progress + Ferien/Countdown</title>
+  <style>
+    :root {
+      --bg: #000;
+      --fg: #eaeaea;
+      --muted: #9aa0a6;
+      --track: #151515;
+      --bar: #22c55e;
+      --bar2: #2dd4bf;
+      --card: #0c0c0c;
+      --border: #191919;
+    }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; }
+    .wrap { width: min(1100px, 94vw); margin: 0 auto; padding: 24px 18px 36px; }
+    h1 { margin: 0 0 8px; font-size: clamp(22px, 4vw, 30px); letter-spacing: .2px; }
+    .sub { color: var(--muted); margin-bottom: 18px; font-size: 14px; }
+
+    .grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+    @media (min-width: 920px) { .grid { grid-template-columns: 1.2fr .8fr; } }
+
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; }
+    .title { font-weight: 700; margin-bottom: 10px; }
+    .muted { color: var(--muted); }
+
+    .progress { position: relative; width: 100%; height: 28px; border-radius: 999px; background: linear-gradient(0deg, #0c0c0c, var(--track)); box-shadow: inset 0 0 0 1px #111; overflow: hidden; }
+    .bar { position: absolute; inset: 0 auto 0 0; width: 0%; height: 100%; background: linear-gradient(90deg, var(--bar), var(--bar2)); box-shadow: 0 0 24px 6px rgba(45, 212, 191, .35); transition: width .2s linear; }
+
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; margin-top: 10px; }
+    .big { font-size: clamp(28px, 6vw, 44px); font-weight: 800; letter-spacing: .4px; }
+    .pill { display: inline-flex; gap: 8px; align-items: center; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
+
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat { display: grid; gap: 2px; }
+    .stat .lab { color: var(--muted); font-size: 12px; }
+    .stat .val { font-weight: 700; font-size: 18px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 6px 8px; border-bottom: 1px solid #141414; }
+    th { text-align: left; color: var(--muted); font-weight: 600; }
+    tr:last-child td { border-bottom: none; }
+    .right { text-align: right; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Stundenplan – Live‑Progress</h1>
+    <div class="sub">Zeitzone: Browser‑Zeit (empfohlen Europa/Wien). Schwarzer Hintergrund. Live‑Update mit Komma‑Dezimalen.</div>
+
+    <div class="grid">
+      <!-- Linke Spalte: aktuelle Stunde -->
+      <div class="card">
+        <div class="title">Aktuelle Stunde</div>
+        <div id="currentInfo" class="muted">—</div>
+        <div class="progress" aria-label="Fortschrittsbalken"><div class="bar" id="bar"></div></div>
+        <div class="row"><div class="big" id="percent">0,0%</div><div class="pill" id="state">wartet…</div></div>
+        <div class="two" style="margin-top:10px">
+          <div class="stat"><div class="lab">Beginn</div><div class="val" id="startOut">—</div></div>
+          <div class="stat"><div class="lab">Ende</div><div class="val" id="endOut">—</div></div>
+          <div class="stat"><div class="lab">Vergangen</div><div class="val" id="elapsedOut">—</div></div>
+          <div class="stat"><div class="lab">Restzeit</div><div class="val" id="leftOut">—</div></div>
+        </div>
+        <div style="margin-top:12px" class="muted">Nächste Stunde: <span id="nextLesson">—</span></div>
+      </div>
+
+      <!-- Rechte Spalte: Schul‑Countdown & Ferien -->
+      <div class="card">
+        <div class="title">Schule – Countdown & Ferien</div>
+        <table>
+          <tr><th>Bis Schulende (09.07.2026)</th><td class="right" id="toEnd">—</td></tr>
+          <tr><th>Kalender‑Wochen bis Ende</th><td class="right" id="weeksLeft">—</td></tr>
+          <tr><th>Schulwochen übrig (Ferien ausgenommen)</th><td class="right" id="schoolWeeksLeft">—</td></tr>
+          <tr><th>Unterrichts‑Stunden übrig (geschätzt)</th><td class="right" id="classHoursLeft">—</td></tr>
+          <tr><th>Nächste Ferien</th><td class="right" id="nextHoliday">—</td></tr>
+          <tr><th>Beginn in</th><td class="right" id="toHoliday">—</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="title">Heutige Stunden</div>
+      <table id="todayTable">
+        <thead><tr><th>Zeit</th><th>Fach</th><th>Lehrer</th><th>Raum</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // ======= Hilfsfunktionen =======
+    const fmtTime = (d) => d.toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
+    const fmtPercent = (num) => (num.toFixed(1)).replace('.', ',') + '%';
+    const fmtDHMS = (ms) => {
+      if (ms < 0) return '0T 0Std 0Min';
+      const s = Math.floor(ms/1000);
+      const d = Math.floor(s/86400);
+      const h = Math.floor((s%86400)/3600);
+      const m = Math.floor((s%3600)/60);
+      return `${d}T ${h}Std ${m}Min`;
+    };
+    const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); x.setHours(0,0,0,0); return x; };
+    const dateOnly = d => { const x=new Date(d); x.setHours(0,0,0,0); return x; };
+
+    // ======= Stundenplan (wochentagsbasiert) =======
+    // 1=Mo ... 5=Fr
+    const schedule = {
+      1: [
+        { start: '08:00', end: '08:50', subj: 'SWP/INFI', teacher: 'GreiA', room: 'A308' },
+        { start: '09:55', end: '10:45', subj: 'Mathe', teacher: 'KuttS', room: 'A311' },
+        { start: '10:45', end: '11:35', subj: 'BET', teacher: 'ReitM', room: 'A311' },
+        { start: '13:20', end: '14:10', subj: 'Multimedia', teacher: 'SchoM', room: 'A308' },
+        { start: '15:15', end: '16:05', subj: 'Multimedia', teacher: 'HolzA', room: 'A308' },
+      ],
+      2: [
+        { start: '08:00', end: '08:50', subj: 'Physik', teacher: 'DrexH', room: 'AE03' },
+        { start: '09:55', end: '10:45', subj: 'Mathe', teacher: 'KuttS', room: 'A311' },
+        { start: '10:45', end: '11:35', subj: 'D', teacher: 'HageS', room: 'A311' },
+        { start: '12:30', end: '13:20', subj: 'Religion', teacher: 'JambS', room: 'A311' },
+        { start: '13:20', end: '14:10', subj: 'UFW', teacher: 'ReitM', room: 'A311' },
+        { start: '15:15', end: '16:05', subj: 'Geschichte', teacher: 'NepoS', room: 'A311' },
+      ],
+      3: [
+        { start: '09:55', end: '10:45', subj: 'Turnen', teacher: 'SchwD', room: 'IU01' },
+        { start: '12:30', end: '13:20', subj: 'Religion', teacher: 'JambS', room: 'A311' },
+        { start: '13:20', end: '14:10', subj: 'UFW', teacher: 'ReitM', room: 'A311' },
+        { start: '15:15', end: '16:05', subj: 'Geschichte', teacher: 'NepoS', room: 'A311' },
+      ],
+      4: [
+        { start: '08:00', end: '08:50', subj: 'SPL', teacher: 'KuttS', room: 'AE02' },
+        { start: '08:50', end: '09:40', subj: 'SPL', teacher: 'FankS', room: 'H118' },
+        { start: '11:40', end: '12:30', subj: 'English', teacher: 'MayrS', room: 'A311' },
+      ],
+      5: [
+        { start: '08:00', end: '08:50', subj: 'BET', teacher: 'ReitM', room: 'A311' },
+        { start: '08:50', end: '09:40', subj: 'English', teacher: 'MayrS', room: 'A311' },
+        { start: '09:55', end: '11:35', subj: 'NWES', teacher: 'FrisB', room: 'A311' },
+        { start: '11:40', end: '13:20', subj: 'Robotik', teacher: 'FrisB', room: 'HU03' },
+        { start: '14:10', end: '15:00', subj: 'Geschichte', teacher: 'NepoS', room: 'A311' },
+        { start: '15:50', end: '15:50', subj: 'Religion', teacher: 'JambS', room: 'A311' },
+      ],
+    };
+
+    // ======= Ferien & freie Tage (Tirol) =======
+    // Alle Daten inkl. Randtage; einzelne Feiertage als 1‑Tages‑Spannen
+    const holidays = [
+      { name: 'Herbstferien', start: '2025-10-26', end: '2025-10-31' },
+      { name: 'Allerheiligen', start: '2025-11-01', end: '2025-11-01' },
+      { name: 'Allerseelentag', start: '2025-11-02', end: '2025-11-02' },
+      { name: 'Mariä Empfängnis', start: '2025-12-08', end: '2025-12-08' },
+      { name: 'Weihnachtsferien', start: '2025-12-24', end: '2026-01-06' },
+      { name: 'Semesterferien (Tirol)', start: '2026-02-09', end: '2026-02-14' },
+      { name: 'Hl. Josef (Tirol)', start: '2026-03-19', end: '2026-03-19' },
+      { name: 'Osterferien', start: '2026-03-28', end: '2026-04-06' },
+      { name: 'Staatsfeiertag', start: '2026-05-01', end: '2026-05-01' },
+      { name: 'Christi Himmelfahrt', start: '2026-05-14', end: '2026-05-14' },
+      { name: 'Schulfrei lt. Verordnung', start: '2026-05-15', end: '2026-05-15' },
+      { name: 'Pfingstferien', start: '2026-05-23', end: '2026-05-25' },
+      { name: 'Fronleichnam', start: '2026-06-04', end: '2026-06-04' },
+      { name: 'Schulfrei lt. Verordnung', start: '2026-06-05', end: '2026-06-05' },
+    ].map(h => ({ ...h, start: new Date(h.start + 'T00:00:00'), end: new Date(h.end + 'T23:59:59') }));
+
+    const termEnd = new Date('2026-07-09T23:59:59');
+
+    function inHoliday(date) {
+      const d = dateOnly(date);
+      return holidays.find(h => d >= dateOnly(h.start) && d <= dateOnly(h.end));
+    }
+
+    function minutesBetween(hhmmA, hhmmB) {
+      const [ha, ma] = hhmmA.split(':').map(Number);
+      const [hb, mb] = hhmmB.split(':').map(Number);
+      return (hb*60+mb) - (ha*60+ma);
+    }
+
+    function lessonToDates(base, entry) {
+      const d1 = new Date(base); const d2 = new Date(base);
+      const [h1, m1] = entry.start.split(':').map(Number);
+      const [h2, m2] = entry.end.split(':').map(Number);
+      d1.setHours(h1, m1, 0, 0); d2.setHours(h2, m2, 0, 0);
+      return [d1, d2];
+    }
+
+    // Heutige Tabelle rendern
+    function renderTodayTable() {
+      const tbody = document.querySelector('#todayTable tbody');
+      tbody.innerHTML = '';
+      const dow = new Date().getDay(); // 0=So
+      const plan = schedule[dow] || [];
+      for (const e of plan) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${e.start}–${e.end}</td><td>${e.subj}</td><td>${e.teacher}</td><td>${e.room}</td>`;
+        tbody.appendChild(tr);
+      }
+    }
+
+    // Aktuelle und nächste Stunde + Progress
+    function updateCurrent() {
+      const now = new Date();
+      const dow = now.getDay();
+      const plan = schedule[dow] || [];
+      let current = null, next = null;
+      for (let i=0;i<plan.length;i++) {
+        const [s,e] = lessonToDates(now, plan[i]);
+        if (now >= s && now <= e) { current = { ...plan[i], s, e, idx:i }; break; }
+        if (now < s) { next = { ...plan[i], s, e, idx:i }; break; }
+      }
+      if (!current && !next) {
+        // nach letzter Stunde: nächste am nächsten Schultag suchen
+        next = findNextLessonFrom(now);
+      }
+
+      const bar = document.getElementById('bar');
+      const percentOut = document.getElementById('percent');
+      const stateOut = document.getElementById('state');
+      const startOut = document.getElementById('startOut');
+      const endOut = document.getElementById('endOut');
+      const elapsedOut = document.getElementById('elapsedOut');
+      const leftOut = document.getElementById('leftOut');
+      const info = document.getElementById('currentInfo');
+      const nextOut = document.getElementById('nextLesson');
+
+      if (current) {
+        const total = current.e - current.s;
+        const elapsed = now - current.s;
+        const pct = Math.min(100, Math.max(0, (elapsed/total)*100));
+        bar.style.width = pct + '%';
+        percentOut.textContent = fmtPercent(pct);
+        stateOut.textContent = `läuft: ${current.subj} · ${current.teacher} · ${current.room}`;
+        startOut.textContent = fmtTime(current.s);
+        endOut.textContent = fmtTime(current.e);
+        elapsedOut.textContent = fmtDHMS(elapsed).replace('T ','');
+        leftOut.textContent = fmtDHMS(current.e - now).replace('T ','');
+        info.textContent = `${current.subj} (${current.start}–${current.end})`;
+
+        // nächste ist die direkt folgende im Tagesplan
+        const i = current.idx + 1;
+        if (plan[i]) {
+          nextOut.textContent = `${plan[i].subj} um ${plan[i].start} (${plan[i].room})`;
+        } else {
+          const nx = findNextLessonFrom(addDays(now,1));
+          nextOut.textContent = nx ? `${nx.subj} am ${nx.s.toLocaleDateString()} um ${nx.start} (${nx.room})` : '—';
+        }
+      } else {
+        // keine laufende Stunde
+        bar.style.width = '0%';
+        percentOut.textContent = '0,0%';
+        stateOut.textContent = 'keine laufende Stunde';
+        startOut.textContent = '—';
+        endOut.textContent = '—';
+        elapsedOut.textContent = '—';
+        leftOut.textContent = '—';
+        info.textContent = '—';
+        nextOut.textContent = next ? `${next.subj} um ${next.start} (${next.room})` : '—';
+      }
+    }
+
+    function findNextLessonFrom(base) {
+      // suche ab heutigem/gegebenem Datum den nächsten Schultag (Mo–Fr, nicht Ferien) mit Stunden
+      for (let d=0; d<30; d++) { // in den nächsten 30 Tagen sollte etwas sein
+        const day = addDays(base, d);
+        const dow = day.getDay();
+        if (dow===0 || dow===6) continue; // So/Sa
+        if (inHoliday(day)) continue; // Ferien/Feiertag ganztägig
+        const plan = schedule[dow] || [];
+        if (plan.length) {
+          // erste Stunde des Tages
+          const first = plan[0];
+          const [s,e] = lessonToDates(day, first);
+          return { ...first, s, e };
+        }
+      }
+      return null;
+    }
+
+    // Countdown‑Blöcke (Ende, Ferien, Schulwochen, Unterrichts‑Stunden)
+    function calcSchoolCounters() {
+      const now = new Date();
+      document.getElementById('toEnd').textContent = fmtDHMS(termEnd - now);
+      const weeks = Math.ceil((termEnd - now) / (7*24*3600*1000));
+      document.getElementById('weeksLeft').textContent = `${weeks}`;
+
+      // Schulwochen (Mo–Fr), Wochen zählen, die mind. einen regulären Schultag (nicht Ferien) enthalten
+      let schoolWeeks = 0;
+      // Starte am Montag dieser Woche (oder nächster, wenn heute > So)
+      let cursor = dateOnly(now);
+      const dayOfWeek = cursor.getDay();
+      const deltaToMonday = (dayOfWeek + 6) % 7; // Mo=1 -> 0, So=0 -> 6
+      cursor = addDays(cursor, -deltaToMonday);
+      while (cursor <= termEnd) {
+        let hasSchoolDay = false;
+        for (let i=0;i<5;i++) { // Mo–Fr
+          const d = addDays(cursor, i);
+          if (d > termEnd) break;
+          if (!inHoliday(d)) {
+            hasSchoolDay = true;
+            break;
+          }
+        }
+        if (hasSchoolDay) schoolWeeks++;
+        cursor = addDays(cursor, 7);
+      }
+      document.getElementById('schoolWeeksLeft').textContent = `${schoolWeeks}`;
+
+      // Unterrichts‑Stunden (geschätzt) ab jetzt bis Schulende, Wochenplan + Ferien ausschließen
+      let minutesTotal = 0;
+      let d = dateOnly(now);
+      // wenn gerade in einer laufenden Stunde: nur Restminuten dieser Stunde + alles danach
+      while (d <= termEnd) {
+        const dow = d.getDay();
+        if (dow>=1 && dow<=5 && !inHoliday(d)) {
+          const plan = schedule[dow] || [];
+          for (const e of plan) {
+            const [s,eDate] = lessonToDates(d, e);
+            if (d.toDateString() === dateOnly(now).toDateString()) {
+              // heutige Stunden: wenn vor jetzt, ggf. teilweise
+              if (eDate <= now) continue; // schon vorbei
+              if (s < now && now < eDate) {
+                minutesTotal += Math.floor((eDate - now)/60000);
+              } else if (s >= now) {
+                minutesTotal += minutesBetween(e.start, e.end);
+              }
+            } else {
+              minutesTotal += minutesBetween(e.start, e.end);
+            }
+          }
+        }
+        d = addDays(d, 1);
+      }
+      const hours = Math.floor(minutesTotal/60);
+      const mins = minutesTotal % 60;
+      document.getElementById('classHoursLeft').textContent = `${hours} Std ${mins} Min`;
+
+      // Nächste Ferien
+      const upcoming = holidays
+        .filter(h => dateOnly(h.start) >= dateOnly(now))
+        .sort((a,b)=>a.start-b.start)[0];
+      if (upcoming) {
+        document.getElementById('nextHoliday').textContent = `${upcoming.name} · ${upcoming.start.toLocaleDateString()} – ${upcoming.end.toLocaleDateString()}`;
+        document.getElementById('toHoliday').textContent = fmtDHMS(dateOnly(upcoming.start) - now);
+      } else {
+        document.getElementById('nextHoliday').textContent = '—';
+        document.getElementById('toHoliday').textContent = '—';
+      }
+    }
+
+    renderTodayTable();
+    updateCurrent();
+    calcSchoolCounters();
+
+    // Live Updates – Progress sehr flüssig, Counter minütlich
+    setInterval(updateCurrent, 100);
+    setInterval(calcSchoolCounters, 60*1000);
+  </script>
+</body>
+</html>
